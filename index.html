@@ -14,7 +14,7 @@
     background: rgba(8, 10, 18, 0.82); backdrop-filter: blur(6px);
     border: 1px solid rgba(120, 150, 255, 0.18); border-radius: 10px;
     color: #cfd6e6; padding: 12px 14px; width: 252px; font-size: 12.5px;
-    user-select: none;
+    user-select: none; max-height: calc(100vh - 28px); overflow-y: auto;
   }
   #panel h1 { font-size: 14px; margin: 0 0 2px; color: #fff; font-weight: 600; letter-spacing: 0.3px; }
   #panel .sub { font-size: 10.5px; color: #8a93ab; margin-bottom: 10px; }
@@ -29,6 +29,8 @@
   #panel details summary { cursor: pointer; color: #9fb4ff; font-size: 12px; margin-top: 4px; }
   #panel .physics { font-size: 11px; color: #97a0b8; line-height: 1.55; margin-top: 6px; }
   #panel .physics code { color: #b8c6ff; font-size: 10.5px; }
+  #panel .section-hdr { font-size: 11px; font-weight: 600; color: #7a8fcc; text-transform: uppercase; letter-spacing: 0.7px; margin: 4px 0 6px; }
+  #objControls { margin-top: 4px; }
   #toggleBtn {
     position: fixed; top: 12px; left: 12px; z-index: 11; display: none;
     background: rgba(8,10,18,0.82); color: #cfd6e6; border: 1px solid rgba(120,150,255,0.18);
@@ -36,6 +38,7 @@
   }
   #fps { position: fixed; bottom: 10px; right: 12px; color: #4a5470; font-size: 11px; z-index: 10; font-variant-numeric: tabular-nums; }
   #err { position: fixed; inset: 0; display: none; place-items: center; color: #f88; font-size: 15px; padding: 30px; text-align: center; }
+  #objSwatch { width: 14px; height: 14px; border-radius: 50%; border: 1px solid #3a4a6a; flex-shrink: 0; }
 </style>
 </head>
 <body>
@@ -69,6 +72,29 @@
   <div class="row"><span>Animate disk</span><input type="checkbox" id="animate" checked></div>
   <div class="row"><span>Auto-orbit camera</span><input type="checkbox" id="orbit"></div>
 
+  <hr>
+  <div class="section-hdr">Test Object</div>
+  <div class="row">
+    <span style="display:flex;align-items:center;gap:6px"><div id="objSwatch"></div> Show object</span>
+    <input type="checkbox" id="objEnabled" checked>
+  </div>
+  <div id="objControls">
+    <div class="row"><span>Type</span>
+      <select id="objType">
+        <option value="0">Blue star (25 000 K)</option>
+        <option value="1">Sun-like (5 800 K)</option>
+        <option value="2">Red giant (3 500 K)</option>
+        <option value="3">Neutron star (1 MK)</option>
+        <option value="4">Rocky planet</option>
+        <option value="5">Ice planet</option>
+      </select>
+    </div>
+    <label><span class="name">Distance r</span><input type="range" id="objR" min="3.5" max="22" step="0.1" value="10"><span class="val" id="objRV"></span></label>
+    <label><span class="name">Angle &phi;</span><input type="range" id="objPhi" min="0" max="360" step="1" value="90"><span class="val" id="objPhiV"></span></label>
+    <label><span class="name">Height</span><input type="range" id="objH" min="-5" max="5" step="0.1" value="1.5"><span class="val" id="objHV"></span></label>
+    <label><span class="name">Radius</span><input type="range" id="objRad" min="0.1" max="3" step="0.05" value="0.6"><span class="val" id="objRadV"></span></label>
+  </div>
+
   <details>
     <summary>The math under the hood</summary>
     <div class="physics">
@@ -79,15 +105,11 @@
       Units: <code>r&#8347; = 2GM/c&sup2; = 1</code>. Photon sphere at
       <code>1.5&thinsp;r&#8347;</code>, disk inner edge at the ISCO
       <code>3&thinsp;r&#8347; (= 6GM/c&sup2;)</code>.<br><br>
-      Disk: Shakura&ndash;Sunyaev profile
-      <code>T &prop; r<sup>&minus;3/4</sup>(1&minus;&radic;(r&#8366;&#8345;/r))<sup>1/4</sup></code>,
-      Keplerian <code>&Omega; = &radic;(GM/r&sup3;)</code>, local speed
-      <code>v = &radic;(M/(r&minus;2M))</code>.
-      Observed shift <code>g = &radic;(1&minus;r&#8347;/r) / &gamma;(1&minus;&beta;&middot;n&#770;)</code>;
-      since <code>I&#8341;/&nu;&sup3;</code> is invariant, rendering a Planck
-      spectrum at <code>T&#8338;&#8336;&#8345; = g&thinsp;T</code> gives the correct
-      <code>g&#8308;</code> beaming automatically. Colors come from Planck's law
-      sampled at R/G/B wavelengths.
+      The test object is a sphere hit-tested against every geodesic step.
+      Stars use Planck blackbody at <code>T&#7506;&#7495;&#7502; = g&thinsp;T</code>
+      with limb darkening. Planets use Lambertian shading.
+      All redshift &amp; lensing effects are exact — the object gets
+      lensed, Einstein-ringed, and multi-imaged exactly like anything else.
     </div>
   </details>
 </div>
@@ -107,48 +129,49 @@ out vec4 outColor;
 uniform vec2  uRes;
 uniform float uTime;
 uniform vec3  uCamPos;
-uniform mat3  uCamBasis;     // columns: right, up, forward
+uniform mat3  uCamBasis;
 uniform float uTanHalfFov;
 uniform int   uSteps;
 uniform float uDiskOuter;
-uniform float uDiskTemp;     // peak emitted temperature, Kelvin
+uniform float uDiskTemp;
 uniform float uExposure;
 uniform bool  uLensing;
 uniform bool  uDoppler;
 uniform bool  uGravShift;
-uniform int   uBackground;   // 0 = stars, 1 = checker grid
+uniform int   uBackground;
 
-// Geometric units G = c = 1, lengths in Schwarzschild radii.
-const float RS    = 1.0;          // r_s = 2GM/c^2
-const float M     = 0.5;          // mass, since r_s = 2M
-const float R_IN  = 3.0;          // ISCO = 6GM/c^2 = 3 r_s
+// Test object
+uniform bool  uObjEnabled;
+uniform vec3  uObjPos;
+uniform float uObjRadius;
+uniform int   uObjType;    // 0-3 = emissive star, 4-5 = planet
+uniform float uObjTemp;    // star surface temperature (K)
+uniform vec3  uObjColor;   // planet albedo
+
+const float RS    = 1.0;
+const float M     = 0.5;
+const float R_IN  = 3.0;
 const float R_ESC = 80.0;
 const float PI    = 3.14159265359;
 
 // ---------- hashing / noise ----------
 float hash13(vec3 p) {
-  p = fract(p * 0.1031);
-  p += dot(p, p.yzx + 33.33);
+  p = fract(p * 0.1031); p += dot(p, p.yzx + 33.33);
   return fract((p.x + p.y) * p.z);
 }
 vec3 hash33(vec3 p) {
-  p = fract(p * vec3(0.1031, 0.1030, 0.0973));
-  p += dot(p, p.yxz + 33.33);
+  p = fract(p * vec3(0.1031, 0.1030, 0.0973)); p += dot(p, p.yxz + 33.33);
   return fract((p.xxy + p.yxx) * p.zyx);
 }
 float hash12(vec2 p) {
-  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-  p3 += dot(p3, p3.yzx + 33.33);
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33);
   return fract((p3.x + p3.y) * p3.z);
 }
 float vnoise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
   f = f * f * (3.0 - 2.0 * f);
-  float a = hash12(i);
-  float b = hash12(i + vec2(1.0, 0.0));
-  float c = hash12(i + vec2(0.0, 1.0));
-  float d = hash12(i + vec2(1.0, 1.0));
-  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+  return mix(mix(hash12(i), hash12(i+vec2(1,0)), f.x),
+             mix(hash12(i+vec2(0,1)), hash12(i+vec2(1,1)), f.x), f.y);
 }
 float fbm(vec2 p) {
   float v = 0.0, a = 0.5;
@@ -156,13 +179,11 @@ float fbm(vec2 p) {
   return v;
 }
 
-// ---------- Planck's law -> RGB chromaticity ----------
-// Spectral radiance B(lambda,T) = (2hc^2/lambda^5) / (exp(hc/(lambda k T)) - 1)
-// sampled at representative R/G/B wavelengths; brightness handled separately.
+// ---------- Planck blackbody ----------
 vec3 blackbody(float T) {
-  T = clamp(T, 800.0, 60000.0);
-  vec3 lambda = vec3(610.0, 549.0, 468.0) * 1e-9;       // meters
-  vec3 x = min(0.0143877688 / (lambda * T), 80.0);       // hc/k = 1.43877688e-2 m·K
+  T = clamp(T, 800.0, 80000.0);
+  vec3 lambda = vec3(610.0, 549.0, 468.0) * 1e-9;
+  vec3 x = min(0.0143877688 / (lambda * T), 80.0);
   vec3 l5 = lambda * lambda * lambda * lambda * lambda;
   vec3 planck = 1.0 / (l5 * (exp(x) - 1.0));
   return planck / max(planck.r, max(planck.g, planck.b));
@@ -172,19 +193,15 @@ vec3 blackbody(float T) {
 vec3 starLayer(vec3 d, float scale) {
   vec3 p = d * scale;
   vec3 id = floor(p);
-  vec3 rnd = hash33(id);
-  if (hash13(id + 5.7) < 0.78) return vec3(0.0);          // most cells empty
-  vec3 starPos = id + 0.15 + 0.7 * rnd;
+  if (hash13(id + 5.7) < 0.78) return vec3(0.0);
+  vec3 starPos = id + 0.15 + 0.7 * hash33(id);
   float dist2 = dot(p - starPos, p - starPos);
   float mag = hash13(id + 19.7);
   float intensity = (0.25 + 5.0 * pow(mag, 9.0)) * exp(-dist2 * 55.0);
-  vec3 tint = blackbody(2600.0 + 9500.0 * hash13(id + 3.1));
-  return intensity * tint;
+  return intensity * blackbody(2600.0 + 9500.0 * hash13(id + 3.1));
 }
-
 vec3 background(vec3 d) {
   if (uBackground == 1) {
-    // lat/long checker grid: makes the lensing distortion explicit
     float lon = atan(d.z, d.x);
     float lat = asin(clamp(d.y, -1.0, 1.0));
     vec2 uv = vec2(lon, lat) / (PI / 12.0);
@@ -195,7 +212,6 @@ vec3 background(vec3 d) {
     return c;
   }
   vec3 col = starLayer(d, 65.0) + starLayer(d, 145.0) * 0.7;
-  // faint galactic band
   vec3 bandN = normalize(vec3(0.35, 1.0, 0.22));
   float band = exp(-pow(dot(d, bandN), 2.0) * 7.0);
   float neb = fbm(vec2(atan(d.z, d.x) * 2.5, d.y * 5.0) + 13.7);
@@ -203,60 +219,95 @@ vec3 background(vec3 d) {
   return col;
 }
 
-// ---------- geodesic acceleration ----------
-// Exact for Schwarzschild null geodesics: with conserved h = |r x dr/ds|,
-// the photon path obeys  d2r/ds2 = -(3/2) r_s h^2 r / |r|^5,
-// equivalent to the Binet equation u'' + u = (3/2) r_s u^2.
+// ---------- geodesic ----------
 vec3 accel(vec3 p, float h2) {
   float r2 = dot(p, p);
   return -1.5 * RS * h2 * p / (r2 * r2 * sqrt(r2));
 }
 
-// ---------- accretion disk shading ----------
+// ---------- accretion disk ----------
 vec4 shadeDisk(vec3 hit, vec3 rayDir) {
   float r = length(hit);
   if (r < R_IN || r > uDiskOuter) return vec4(0.0);
-
   float phi = atan(hit.z, hit.x);
-
-  // Keplerian angular velocity (exact for Schwarzschild circular orbits)
   float omega = sqrt(M / (r * r * r));
   float phase = phi - uTime * omega;
-
-  // turbulent surface density, advected by differential rotation
   float n1 = fbm(vec2(r * 2.4, phase * 2.2));
   float n2 = fbm(vec2(r * 7.0 + 31.0, phase * 6.5));
   float turb = clamp(0.55 + 0.9 * (n1 - 0.5) + 0.45 * (n2 - 0.5), 0.0, 1.4);
-
   float inner = smoothstep(R_IN, R_IN + 0.35, r);
   float outer = 1.0 - smoothstep(uDiskOuter - 3.0, uDiskOuter, r);
   float alpha = clamp(turb * 1.4, 0.0, 1.0) * inner * outer;
   if (alpha <= 0.001) return vec4(0.0);
-
-  // Shakura–Sunyaev thin-disk temperature profile, normalized to peak = 1
   float Tnorm = pow(R_IN / r, 0.75) * pow(max(1.0 - sqrt(R_IN / r), 0.0), 0.25) / 0.488;
   float Te = uDiskTemp * Tnorm * (0.85 + 0.3 * n1);
-
-  // orbital velocity measured by a local static observer: v = sqrt(M/(r-2M))
   float vorb = min(sqrt(M / max(r - RS, 1e-4)), 0.995);
-  vec3 tangent = normalize(vec3(-hit.z, 0.0, hit.x));     // prograde
+  vec3 tangent = normalize(vec3(-hit.z, 0.0, hit.x));
   vec3 beta = vorb * tangent;
   float gam = 1.0 / sqrt(1.0 - vorb * vorb);
-
-  // photon propagation direction (emitter -> observer); we trace backwards
   vec3 nphot = -rayDir;
-  float dopp = 1.0 / (gam * (1.0 - dot(beta, nphot)));    // relativistic Doppler
-  float grav = sqrt(1.0 - RS / r);                        // redshift to infinity
-
+  float dopp = 1.0 / (gam * (1.0 - dot(beta, nphot)));
+  float grav = sqrt(1.0 - RS / r);
   float g = (uDoppler ? dopp : 1.0) * (uGravShift ? grav : 1.0);
-
-  // I_nu/nu^3 invariance: a blackbody at T observed shifted by g is a
-  // blackbody at gT, so beaming/dimming ~ g^4 falls out of T_obs^4.
   float Tobs = g * Te;
   float lum = pow(Tobs / 6500.0, 4.0);
-  vec3 col = blackbody(Tobs) * lum;
+  return vec4(blackbody(Tobs) * lum, alpha);
+}
 
-  return vec4(col, alpha);
+// ---------- test object ----------
+// Returns t in [0,1] along segment (pp->p) where the sphere is hit, or -1.
+float sphereHit(vec3 pp, vec3 p, vec3 center, float radius) {
+  vec3 seg = p - pp;
+  vec3 oc  = pp - center;
+  float a = dot(seg, seg);
+  if (a < 1e-12) return -1.0;
+  float b = 2.0 * dot(oc, seg);
+  float c = dot(oc, oc) - radius * radius;
+  float disc = b * b - 4.0 * a * c;
+  if (disc < 0.0) return -1.0;
+  float sq = sqrt(disc);
+  float t1 = (-b - sq) / (2.0 * a);
+  if (t1 >= 0.0 && t1 <= 1.0) return t1;
+  float t2 = (-b + sq) / (2.0 * a);
+  if (t2 >= 0.0 && t2 <= 1.0) return t2;
+  return -1.0;
+}
+
+vec3 shadeObject(vec3 hitPos, vec3 normal, vec3 rayDir) {
+  float r_hit = length(hitPos);
+  float gravFactor = uGravShift ? sqrt(max(1.0 - RS / r_hit, 0.001)) : 1.0;
+
+  if (uObjType <= 3) {
+    // Emissive star / compact object
+    float Tobs = gravFactor * uObjTemp;
+    // Limb darkening: I(mu) = I0*(0.4 + 0.6*mu), mu = cos(angle from normal)
+    float mu = clamp(dot(normal, -rayDir), 0.0, 1.0);
+    float limb = 0.4 + 0.6 * mu;
+    float lum  = pow(Tobs / 6500.0, 4.0);
+    vec3  col  = blackbody(Tobs) * lum * limb;
+    // Neutron star: add a hot polar cap glow
+    if (uObjType == 3) {
+      float pole = pow(abs(normal.y), 6.0);
+      col += blackbody(min(uObjTemp * 1.8, 80000.0)) * pole * lum * 3.0;
+    }
+    return col;
+  } else {
+    // Planet: Lambertian + thin atmospheric limb glow
+    // Fake illumination from the disk plane (warm orange-ish)
+    vec3 lightDir = normalize(vec3(0.6, 0.35, 0.5));
+    float lamb = max(dot(normal, lightDir), 0.0);
+    // Ambient from the accretion disk glow
+    float amb = 0.08;
+    vec3 col = uObjColor * (amb + (1.0 - amb) * lamb);
+    // Apply gravitational redshift to surface brightness
+    col *= gravFactor * gravFactor;
+    // Atmospheric limb glow (scattered disk light)
+    float mu = clamp(dot(normal, -rayDir), 0.0, 1.0);
+    float fresnel = pow(1.0 - mu, 4.0);
+    vec3 atmColor = (uObjType == 5) ? vec3(0.5, 0.7, 1.0) : vec3(0.6, 0.4, 0.2);
+    col += atmColor * fresnel * 0.18 * gravFactor;
+    return col;
+  }
 }
 
 void main() {
@@ -266,50 +317,58 @@ void main() {
   vec3 p = uCamPos;
   vec3 v = dir;
   vec3 L = cross(p, v);
-  float h2 = uLensing ? dot(L, L) : 0.0;   // conserved angular momentum^2
+  float h2 = uLensing ? dot(L, L) : 0.0;
 
-  vec3 col = vec3(0.0);
-  float trans = 1.0;
-  bool captured = false;
-  bool escaped = false;
+  vec3  col    = vec3(0.0);
+  float trans  = 1.0;
+  bool  captured = false;
+  bool  escaped  = false;
 
   for (int i = 0; i < 1500; i++) {
     if (i >= uSteps) break;
     float r = length(p);
-    if (r < RS) { captured = true; break; }
-    if (r > R_ESC && dot(p, v) > 0.0) { escaped = true; break; }
+    if (r < RS)                          { captured = true; break; }
+    if (r > R_ESC && dot(p, v) > 0.0)   { escaped  = true; break; }
 
-    // smaller steps near the photon sphere where curvature is strongest
     float dt = clamp(0.02 + 0.065 * (r - RS), 0.02, 0.45);
 
-    vec3 pp = p;
-    vec3 k1p = v;                  vec3 k1v = accel(p, h2);
-    vec3 k2p = v + 0.5 * dt * k1v; vec3 k2v = accel(p + 0.5 * dt * k1p, h2);
-    vec3 k3p = v + 0.5 * dt * k2v; vec3 k3v = accel(p + 0.5 * dt * k2p, h2);
-    vec3 k4p = v + dt * k3v;       vec3 k4v = accel(p + dt * k3p, h2);
-    p += dt / 6.0 * (k1p + 2.0 * k2p + 2.0 * k3p + k4p);
-    v += dt / 6.0 * (k1v + 2.0 * k2v + 2.0 * k3v + k4v);
+    vec3 pp  = p;
+    vec3 k1p = v;                   vec3 k1v = accel(p, h2);
+    vec3 k2p = v + 0.5*dt*k1v;     vec3 k2v = accel(p + 0.5*dt*k1p, h2);
+    vec3 k3p = v + 0.5*dt*k2v;     vec3 k3v = accel(p + 0.5*dt*k2p, h2);
+    vec3 k4p = v + dt*k3v;         vec3 k4v = accel(p + dt*k3p, h2);
+    p += dt / 6.0 * (k1p + 2.0*k2p + 2.0*k3p + k4p);
+    v += dt / 6.0 * (k1v + 2.0*k2v + 2.0*k3v + k4v);
 
-    // equatorial plane crossing -> possible disk intersection
+    // Test object sphere intersection
+    if (uObjEnabled) {
+      float t = sphereHit(pp, p, uObjPos, uObjRadius);
+      if (t >= 0.0) {
+        vec3 hitPos = pp + t * (p - pp);
+        vec3 normal = normalize(hitPos - uObjPos);
+        col  += trans * shadeObject(hitPos, normal, normalize(v));
+        trans = 0.0;
+        escaped = false; captured = false;
+        break;
+      }
+    }
+
+    // Disk crossing
     if (p.y * pp.y < 0.0) {
-      float t = pp.y / (pp.y - p.y);
-      vec3 hit = mix(pp, p, t);
-      vec4 d = shadeDisk(hit, normalize(v));
-      col += trans * d.a * d.rgb;
+      float t   = pp.y / (pp.y - p.y);
+      vec3  hit = mix(pp, p, t);
+      vec4  d   = shadeDisk(hit, normalize(v));
+      col   += trans * d.a * d.rgb;
       trans *= 1.0 - d.a;
       if (trans < 0.02) break;
     }
   }
 
-  // rays that run out of steps are trapped near the photon sphere -> black
-  if (escaped && trans > 0.02) {
-    col += trans * background(normalize(v));
-  }
+  if (escaped && trans > 0.02) col += trans * background(normalize(v));
 
-  // exposure + ACES tonemap + gamma
   col *= uExposure;
-  col = clamp((col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14), 0.0, 1.0);
-  col = pow(col, vec3(1.0 / 2.2));
+  col  = clamp((col * (2.51*col + 0.03)) / (col * (2.43*col + 0.59) + 0.14), 0.0, 1.0);
+  col  = pow(col, vec3(1.0 / 2.2));
   outColor = vec4(col, 1.0);
 }
 </script>
@@ -328,83 +387,101 @@ function compile(type, src) {
   const s = gl.createShader(type);
   gl.shaderSource(s, src.trim());
   gl.compileShader(s);
-  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-    throw new Error(gl.getShaderInfoLog(s));
-  }
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
   return s;
 }
 const prog = gl.createProgram();
-gl.attachShader(prog, compile(gl.VERTEX_SHADER, document.getElementById('vs').textContent));
+gl.attachShader(prog, compile(gl.VERTEX_SHADER,   document.getElementById('vs').textContent));
 gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, document.getElementById('fs').textContent));
 gl.linkProgram(prog);
 if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
 gl.useProgram(prog);
 
-// fullscreen triangle
-const vao = gl.createVertexArray();
-gl.bindVertexArray(vao);
-const buf = gl.createBuffer();
-gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+const buf = gl.createBuffer();      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
 gl.enableVertexAttribArray(0);
 gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
 const U = {};
-for (const name of ['uRes','uTime','uCamPos','uCamBasis','uTanHalfFov','uSteps','uDiskOuter',
-                    'uDiskTemp','uExposure','uLensing','uDoppler','uGravShift','uBackground']) {
-  U[name] = gl.getUniformLocation(prog, name);
-}
+for (const n of [
+  'uRes','uTime','uCamPos','uCamBasis','uTanHalfFov','uSteps','uDiskOuter',
+  'uDiskTemp','uExposure','uLensing','uDoppler','uGravShift','uBackground',
+  'uObjEnabled','uObjPos','uObjRadius','uObjType','uObjTemp','uObjColor',
+]) U[n] = gl.getUniformLocation(prog, n);
 
-// ---------- state ----------
+// Object type definitions
+const OBJ_TYPES = [
+  { temp: 25000, color: [0.55, 0.70, 1.00], swatch: '#8eb8ff' },  // 0 blue star
+  { temp:  5778, color: [1.00, 0.90, 0.60], swatch: '#ffe080' },  // 1 sun-like
+  { temp:  3500, color: [1.00, 0.35, 0.08], swatch: '#ff6020' },  // 2 red giant
+  { temp: 1e6,   color: [0.85, 0.92, 1.00], swatch: '#d0e8ff' },  // 3 neutron star
+  { temp:     0, color: [0.45, 0.38, 0.30], swatch: '#9a7060' },  // 4 rocky planet
+  { temp:     0, color: [0.65, 0.75, 0.90], swatch: '#a8c0e8' },  // 5 ice planet
+];
+
 const state = {
   az: -0.6, el: 0.13, dist: 16,
   temp: 8000, diskOuter: 14, exposure: 1.2,
   steps: 450, resScale: 0.75,
   lensing: true, doppler: true, grav: true, animate: true, orbit: false,
   bg: 0, time: 0,
+  // object
+  objEnabled: true, objType: 0,
+  objR: 10, objPhi: 90, objH: 1.5, objRad: 0.6,
 };
 
-// ---------- controls ----------
 const $ = id => document.getElementById(id);
 function bindSlider(id, key, fmt) {
   const el = $(id), out = $(id + 'V');
   const update = () => { state[key] = parseFloat(el.value); out.textContent = fmt(state[key]); };
-  el.addEventListener('input', update);
-  update();
+  el.addEventListener('input', update); update();
 }
-bindSlider('temp', 'temp', v => v.toFixed(0) + ' K');
-bindSlider('dsize', 'diskOuter', v => v.toFixed(1) + ' rₛ');
-bindSlider('expo', 'exposure', v => v.toFixed(2));
-for (const [id, key] of [['lensing','lensing'],['doppler','doppler'],['grav','grav'],['animate','animate'],['orbit','orbit']]) {
-  $(id).addEventListener('change', e => state[key] = e.target.checked);
-}
+bindSlider('temp',   'temp',     v => v.toFixed(0) + ' K');
+bindSlider('dsize',  'diskOuter',v => v.toFixed(1) + ' rₛ');
+bindSlider('expo',   'exposure', v => v.toFixed(2));
+bindSlider('objR',   'objR',     v => v.toFixed(1) + ' rₛ');
+bindSlider('objPhi', 'objPhi',   v => v.toFixed(0) + '°');
+bindSlider('objH',   'objH',     v => v.toFixed(1) + ' rₛ');
+bindSlider('objRad', 'objRad',   v => v.toFixed(2) + ' rₛ');
+
+for (const [id, key] of [
+  ['lensing','lensing'],['doppler','doppler'],['grav','grav'],
+  ['animate','animate'],['orbit','orbit'],['objEnabled','objEnabled'],
+]) $(id).addEventListener('change', e => state[key] = e.target.checked);
+
 $('bg').addEventListener('change', e => state.bg = parseInt(e.target.value));
 $('quality').addEventListener('change', e => {
-  const q = { low: [250, 0.5], med: [450, 0.75], high: [800, 1.0] }[e.target.value];
-  state.steps = q[0]; state.resScale = q[1];
-  resize();
+  const q = { low:[250,0.5], med:[450,0.75], high:[800,1.0] }[e.target.value];
+  state.steps = q[0]; state.resScale = q[1]; resize();
 });
 
-// collapse panel on small screens
+const swatch = $('objSwatch');
+function updateSwatch() { swatch.style.background = OBJ_TYPES[state.objType].swatch; }
+$('objType').addEventListener('change', e => { state.objType = parseInt(e.target.value); updateSwatch(); });
+updateSwatch();
+
+// Panel collapse on small screens
 const panel = $('panel'), toggleBtn = $('toggleBtn');
 function layoutPanel() {
-  if (window.innerWidth < 640) { panel.style.display = 'none'; toggleBtn.style.display = 'block'; }
-  else { panel.style.display = 'block'; toggleBtn.style.display = 'none'; }
+  const small = window.innerWidth < 640;
+  panel.style.display = small ? 'none' : 'block';
+  toggleBtn.style.display = small ? 'block' : 'none';
 }
 toggleBtn.addEventListener('click', () => {
   panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
 });
 layoutPanel();
 
-// ---------- camera input ----------
+// Camera input
 const pointers = new Map();
 let pinchDist = 0;
 canvas.addEventListener('pointerdown', e => {
   canvas.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, [e.clientX, e.clientY]);
   if (pointers.size === 2) {
-    const [a, b] = [...pointers.values()];
-    pinchDist = Math.hypot(a[0] - b[0], a[1] - b[1]);
+    const [a,b] = [...pointers.values()];
+    pinchDist = Math.hypot(a[0]-b[0], a[1]-b[1]);
   }
   canvas.classList.add('dragging');
 });
@@ -416,24 +493,23 @@ canvas.addEventListener('pointermove', e => {
     state.az += (e.clientX - prev[0]) * 0.005;
     state.el = Math.min(1.45, Math.max(-1.45, state.el + (e.clientY - prev[1]) * 0.005));
   } else if (pointers.size === 2) {
-    const [a, b] = [...pointers.values()];
-    const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+    const [a,b] = [...pointers.values()];
+    const d = Math.hypot(a[0]-b[0], a[1]-b[1]);
     if (pinchDist > 0) state.dist = Math.min(45, Math.max(2.2, state.dist * pinchDist / d));
     pinchDist = d;
   }
 });
-const endPointer = e => { pointers.delete(e.pointerId); if (pointers.size === 0) canvas.classList.remove('dragging'); };
-canvas.addEventListener('pointerup', endPointer);
-canvas.addEventListener('pointercancel', endPointer);
+const endPtr = e => { pointers.delete(e.pointerId); if (!pointers.size) canvas.classList.remove('dragging'); };
+canvas.addEventListener('pointerup', endPtr);
+canvas.addEventListener('pointercancel', endPtr);
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
   state.dist = Math.min(45, Math.max(2.2, state.dist * Math.exp(e.deltaY * 0.001)));
 }, { passive: false });
 
-// ---------- render loop ----------
 function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2) * state.resScale;
-  canvas.width = Math.round(window.innerWidth * dpr);
+  canvas.width  = Math.round(window.innerWidth  * dpr);
   canvas.height = Math.round(window.innerHeight * dpr);
   gl.viewport(0, 0, canvas.width, canvas.height);
 }
@@ -446,18 +522,22 @@ let last = performance.now(), fpsAcc = 0, fpsN = 0, fpsT = 0;
 function frame(now) {
   const dt = Math.min((now - last) / 1000, 0.1);
   last = now;
-  if (state.animate) state.time += dt * 4.0;   // disk pattern time, in r_s/c units
-  if (state.orbit && pointers.size === 0) state.az += dt * 0.06;
+  if (state.animate) state.time += dt * 4.0;
+  if (state.orbit && !pointers.size) state.az += dt * 0.06;
 
-  // camera basis (columns: right, up, forward)
   const ce = Math.cos(state.el), se = Math.sin(state.el);
   const ca = Math.cos(state.az), sa = Math.sin(state.az);
-  const pos = [state.dist * ce * ca, state.dist * se, state.dist * ce * sa];
+  const pos = [state.dist*ce*ca, state.dist*se, state.dist*ce*sa];
   let f = [-pos[0], -pos[1], -pos[2]];
-  const fl = Math.hypot(...f); f = f.map(x => x / fl);
-  let r = [f[1] * 0 - f[2] * 1, f[2] * 0 - f[0] * 0, f[0] * 1 - f[1] * 0]; // cross(f, up=(0,1,0))
-  const rl = Math.hypot(...r); r = r.map(x => x / rl);
-  const u = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]];
+  const fl = Math.hypot(...f); f = f.map(x => x/fl);
+  let r = [f[1]*0-f[2]*1, f[2]*0-f[0]*0, f[0]*1-f[1]*0];
+  const rl = Math.hypot(...r); r = r.map(x => x/rl);
+  const u = [r[1]*f[2]-r[2]*f[1], r[2]*f[0]-r[0]*f[2], r[0]*f[1]-r[1]*f[0]];
+
+  // Object world position
+  const phiRad = state.objPhi * Math.PI / 180;
+  const objPos = [state.objR * Math.cos(phiRad), state.objH, state.objR * Math.sin(phiRad)];
+  const ot = OBJ_TYPES[state.objType];
 
   gl.uniform2f(U.uRes, canvas.width, canvas.height);
   gl.uniform1f(U.uTime, state.time);
@@ -468,15 +548,21 @@ function frame(now) {
   gl.uniform1f(U.uDiskOuter, state.diskOuter);
   gl.uniform1f(U.uDiskTemp, state.temp);
   gl.uniform1f(U.uExposure, state.exposure);
-  gl.uniform1i(U.uLensing, state.lensing ? 1 : 0);
-  gl.uniform1i(U.uDoppler, state.doppler ? 1 : 0);
-  gl.uniform1i(U.uGravShift, state.grav ? 1 : 0);
+  gl.uniform1i(U.uLensing,   state.lensing   ? 1 : 0);
+  gl.uniform1i(U.uDoppler,   state.doppler   ? 1 : 0);
+  gl.uniform1i(U.uGravShift, state.grav      ? 1 : 0);
   gl.uniform1i(U.uBackground, state.bg);
+  gl.uniform1i(U.uObjEnabled, state.objEnabled ? 1 : 0);
+  gl.uniform3fv(U.uObjPos, objPos);
+  gl.uniform1f(U.uObjRadius, state.objRad);
+  gl.uniform1i(U.uObjType, state.objType);
+  gl.uniform1f(U.uObjTemp, ot.temp);
+  gl.uniform3fv(U.uObjColor, ot.color);
 
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 
   fpsAcc += dt; fpsN++; fpsT += dt;
-  if (fpsT > 0.5) { fpsEl.textContent = (fpsN / fpsAcc).toFixed(0) + ' fps'; fpsAcc = 0; fpsN = 0; fpsT = 0; }
+  if (fpsT > 0.5) { fpsEl.textContent = (fpsN/fpsAcc).toFixed(0) + ' fps'; fpsAcc=0; fpsN=0; fpsT=0; }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
