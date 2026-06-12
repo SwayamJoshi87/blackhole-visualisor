@@ -158,11 +158,24 @@ const float PI    = 3.14159265359;
 float hash13(vec3 p) { p=fract(p*0.1031); p+=dot(p,p.yzx+33.33); return fract((p.x+p.y)*p.z); }
 vec3  hash33(vec3 p) { p=fract(p*vec3(0.1031,0.1030,0.0973)); p+=dot(p,p.yxz+33.33); return fract((p.xxy+p.yxx)*p.zyx); }
 float hash12(vec2 p) { vec3 q=fract(vec3(p.xyx)*0.1031); q+=dot(q,q.yzx+33.33); return fract((q.x+q.y)*q.z); }
+vec2  hash22(vec2 p) { p=fract(p*vec2(0.1031,0.1030)); p+=dot(p,p.yx+33.33); return fract((p.xx+p.yy)*p.yx); }
 float vnoise(vec2 p) {
   vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
   return mix(mix(hash12(i),hash12(i+vec2(1,0)),f.x),mix(hash12(i+vec2(0,1)),hash12(i+vec2(1,1)),f.x),f.y);
 }
 float fbm(vec2 p) { float v=0.,a=.5; for(int i=0;i<4;i++){v+=a*vnoise(p);p*=2.03;a*=.5;} return v; }
+
+// Worley (cellular) noise: distance to nearest feature point.
+// Returns ~0 at cell centres, ~1 at boundaries — good for plasma granulation.
+float worley(vec2 p) {
+  vec2 i=floor(p); float minD=4.0;
+  for(int dy=-1;dy<=1;dy++) for(int dx=-1;dx<=1;dx++) {
+    vec2 cell=i+vec2(dx,dy);
+    float d=length(p-(cell+hash22(cell)));
+    minD=min(minD,d);
+  }
+  return minD;
+}
 
 // ---------- Planck blackbody ----------
 vec3 blackbody(float T) {
@@ -201,25 +214,89 @@ vec3 accel(vec3 p, float h2) {
 }
 
 // ---------- disk ----------
-vec4 shadeDisk(vec3 hit, vec3 rayDir) {
-  float r=length(hit);
-  if (r<R_IN||r>uDiskOuter) return vec4(0.);
-  float phi=atan(hit.z,hit.x), omega=sqrt(M/(r*r*r));
-  float n1=fbm(vec2(r*2.4,(phi-uTime*omega)*2.2));
-  float n2=fbm(vec2(r*7.+31.,(phi-uTime*omega)*6.5));
-  float turb=clamp(.55+.9*(n1-.5)+.45*(n2-.5),0.,1.4);
-  float alpha=clamp(turb*1.4,0.,1.)*smoothstep(R_IN,R_IN+.35,r)*(1.-smoothstep(uDiskOuter-3.,uDiskOuter,r));
-  if (alpha<=.001) return vec4(0.);
-  float Tnorm=pow(R_IN/r,.75)*pow(max(1.-sqrt(R_IN/r),0.),.25)/.488;
-  float Te=uDiskTemp*Tnorm*(.85+.3*n1);
-  float vorb=min(sqrt(M/max(r-RS,1e-4)),.995);
-  vec3 beta=vorb*normalize(vec3(-hit.z,0.,hit.x));
-  float gam=1./sqrt(1.-vorb*vorb);
-  float dopp=1./(gam*(1.-dot(beta,-rayDir)));
-  float grav=sqrt(1.-RS/r);
-  float g=(uDoppler?dopp:1.)*(uGravShift?grav:1.);
-  float Tobs=g*Te;
-  return vec4(blackbody(Tobs)*pow(Tobs/6500.,4.), alpha);
+// grazeAbs = |sin θ| where θ is the ray's angle to the equatorial plane.
+// Shallow (grazing) rays travel through more disk material → brighter column.
+vec4 shadeDisk(vec3 hit, vec3 rayDir, float grazeAbs) {
+  float r = length(hit);
+  bool inPlunge = (r < R_IN && r > RS * 1.15);
+  if (!inPlunge && (r < R_IN || r > uDiskOuter)) return vec4(0.0);
+
+  float phi   = atan(hit.z, hit.x);
+  float omega = sqrt(M / (r*r*r));
+  float phase = phi - uTime * omega;          // azimuth in co-rotating frame
+  float ur    = log(max(r, 0.1));             // log-radial coordinate
+
+  // ── Texture ──────────────────────────────────────────────────────────────
+  // Log-polar coords (ur, phase) naturally align turbulence with orbital shear.
+  // Azimuthal stretch ~3:1 mimics MRI cells elongated along the orbit.
+  vec2 lp1 = vec2(ur * 2.2,  phase * 3.0);
+  vec2 lp2 = vec2(ur * 6.5 + 17.3, phase * 8.5);
+
+  float n1 = fbm(lp1);                        // large-scale turbulence
+  float n2 = fbm(lp2);                        // fine-scale turbulence
+
+  // Worley cellular noise: plasma granulation cells (stretched 2:1 azimuthally)
+  float cell = worley(vec2(ur * 3.4 + 4.1, phase * 6.0));
+  float plasma = smoothstep(0.55, 0.05, cell); // bright near cell centres
+
+  // 2-armed logarithmic spiral density wave (pitch k≈4.5)
+  // Physically: driven by non-axisymmetric gravitational instabilities.
+  float spiral = 0.5 + 0.5 * sin(2.0*phase - 4.5*ur + uTime*0.07);
+
+  // 3 orbiting hotspots at different radii (quasi-periodic oscillations)
+  float hotspot = 0.0;
+  for (int k = 0; k < 3; k++) {
+    float r_s  = R_IN + 0.8 + float(k) * 2.1;
+    float om_s = sqrt(M / (r_s*r_s*r_s));
+    float ph_s = float(k) * 2.094 + uTime * om_s; // evenly spaced, Keplerian
+    float dr   = r - r_s;
+    float dp   = mod(phase - ph_s + PI, 2.0*PI) - PI;  // wrap [-π,π]
+    float arc  = r_s * abs(dp);                          // arc-length distance
+    hotspot   += exp(-(dr*dr*0.5 + arc*arc*0.12)) * (2.0 - float(k)*0.4);
+  }
+
+  // Combine: turbulence × spiral structure × plasma cells + hotspot highlights
+  float density = (0.45 + 0.85*(n1-0.5) + 0.30*(n2-0.5))
+                * (0.70 + 0.55*spiral)
+                * (0.60 + 0.80*plasma);
+  density = clamp(density + hotspot*0.35, 0.0, 2.5);
+
+  // ── Opacity with grazing-angle volumetric column factor ───────────────────
+  // A ray crossing at angle θ to the disk plane traverses a column ∝ H/sinθ.
+  // H/r ≈ 0.06 for a geometrically thin disk.
+  float H = 0.06 * r;
+  float graze_boost = inPlunge ? 1.0 : clamp(H / max(grazeAbs, H * 0.10), 1.0, 5.5);
+
+  float alpha;
+  if (inPlunge) {
+    // Hot gas spiralling into the horizon: dim, smooth, fading inward
+    alpha = smoothstep(RS*1.15, R_IN, r) * 0.28;
+  } else {
+    float inner = smoothstep(R_IN, R_IN+0.45, r);
+    float outer = 1.0 - smoothstep(uDiskOuter-3.0, uDiskOuter, r);
+    alpha = clamp(density*1.1, 0.0, 1.0) * inner * outer * graze_boost;
+  }
+  if (alpha <= 0.001) return vec4(0.0);
+
+  // ── Temperature profile ───────────────────────────────────────────────────
+  // Shakura-Sunyaev / Novikov-Thorne (identical for Schwarzschild, zero torque
+  // at ISCO): T ∝ r^(-3/4) (1-√(r_in/r))^(1/4).  Plunge region: steeper.
+  float Tnorm = inPlunge
+      ? pow(R_IN/r, 1.8) * 0.65
+      : pow(R_IN/r, 0.75)*pow(max(1.0-sqrt(R_IN/r),0.0),0.25)/0.488;
+  // Temperature fluctuations correlated with local density (hotter = denser)
+  float Te = uDiskTemp * Tnorm * (0.80 + 0.38*n1 + 0.12*plasma);
+
+  // ── Relativistic frequency shift ──────────────────────────────────────────
+  float vorb = min(sqrt(M / max(r-RS, 1e-4)), 0.995);
+  vec3 beta  = vorb * normalize(vec3(-hit.z, 0.0, hit.x));
+  float gam  = 1.0 / sqrt(1.0 - vorb*vorb);
+  float dopp = 1.0 / (gam * (1.0 - dot(beta, -rayDir)));
+  float grav = sqrt(max(1.0 - RS/r, 0.0));
+  float g    = (uDoppler ? dopp : 1.0) * (uGravShift ? grav : 1.0);
+  float Tobs = g * Te;
+
+  return vec4(blackbody(Tobs) * pow(Tobs/6500.0, 4.0), alpha);
 }
 
 // ---------- sphere hit on segment pp→p ----------
@@ -300,10 +377,13 @@ void main() {
       }
     }
 
-    // Equatorial plane crossing → disk
+    // Equatorial plane crossing → disk (also catches plunge region r < R_IN)
     if (p.y*pp.y<0.) {
       float t=pp.y/(pp.y-p.y);
-      vec4 d=shadeDisk(mix(pp,p,t), normalize(v));
+      vec3 hit=mix(pp,p,t);
+      // |sin θ| = component of ray direction perpendicular to disk / |v|
+      float grazeAbs = abs(v.y) / max(length(v), 1e-6);
+      vec4 d=shadeDisk(hit, normalize(v), grazeAbs);
       col+=trans*d.a*d.rgb;
       trans*=1.-d.a;
       if (trans<0.02) break;
